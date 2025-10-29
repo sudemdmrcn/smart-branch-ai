@@ -195,23 +195,4 @@ if __name__ == "__main__":
         load_data(engine, products_df, 'products')
         
         print("\n[TAMAMLANDI] Tüm işlemler bitti. Artık sales verisine geçebiliriz!")
-        # ... (products yükleme kodunun hemen altı) ...
-
-        # 4. SATIŞ HAREKETLERİ (SALES) VERİSİ ÜRETİMİ
-        try:
-            # Son 3 yılı simüle edelim (Yaklaşık 1095 gün)
-            end_date = datetime.now().date()
-            start_date = end_date - timedelta(days=1095)
-            
-            sales_df = generate_sales_data(engine, start_date, end_date, sales_per_day_per_branch=150)
-            
-            # Satış verisini yükleme
-            load_data(engine, sales_df, 'sales') 
-            
-            # Toplam satış adedini kontrol edelim (Yaklaşık 5 şube * 1095 gün * 150 satış = ~821,250 kayıt)
-            print(f"-> TOPLAM {len(sales_df):,} adet satış kaydı başarıyla oluşturuldu ve yüklendi.")
-            
-        except Exception as e:
-            print(f"!!! [YÜKLEME HATASI] 'sales' tablosuna yükleme başarısız: {e}")
-            
-        print("\n[TAMAMLANDI] Tüm işlemler bitti. AI MODELLEME BAŞLAYABİLİR!")
+        
