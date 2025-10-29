@@ -1,9 +1,12 @@
+
 import psycopg2
 from psycopg2 import sql
 import pandas as pd
 from faker import Faker
 import random
-
+from datetime import datetime, timedelta
+from sqlalchemy import create_engine
+FAKE = Faker('tr_TR')
 
 # ----------------- 1. YAPILANDIRMA AYARLARI -----------------
 DB_HOST = "localhost"
@@ -12,40 +15,72 @@ DB_USER = "postgres"
 DB_PASS = "Sudem12345" # <-- Kendi şifreniz, Türkçe karakter olmamalı
 
 # ----------------- 2. VERITABANI BAĞLANTI FONKSIYONU -----------------
-def connect_db():
+# ----------------- 2. VERITABANI BAĞLANTI FONKSIYONU (YENİ) -----------------
+def create_db_engine():
+    """SQLAlchemy motoru (engine) oluşturur."""
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASS,
-            # UTF-8 hata sorununu çözmek için bu satırı ekliyoruz
-            client_encoding='latin1' 
-        )
-        print("\n[BAŞARILI] Veritabanına bağlantı kuruldu.")
-        return conn
-    except psycopg2.Error as e:
-    # ... (Hata kodu) ...
+        # PostgreSQL bağlantı dizesi: Host, User, Pass ve DB_NAME'i kullanır
+        engine_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
+        engine = create_engine(engine_url)
+        print("\n[BAŞARILI] SQLAlchemy Motoru oluşturuldu.")
+        
+        # Basit bir test bağlantısı yapalım
+        with engine.connect() as conn:
+            conn.close()
+        print("-> Veritabanı bağlantı testi başarılı.")
+        return engine
+    except Exception as e:
+        print(f"\n[HATA] Veritabanı motoru oluşturulamadı!")
+        print(f"SQLAlchemy Hatası: {e}")
         return None
+# ... (connect_db fonksiyonunun hemen altı) ...
 
+# ----------------- 3. ÖRNEK VERI ÜRETME FONKSIYONLARI BURAYA GELECEK! -----------------
+
+def generate_branch_data(num_branches=5):
+    """Branches tablosu için statik şube verisi üretir."""
+    branch_list = []
+    # Şube açılış tarihleri için bir başlangıç tarihi tanımlıyoruz
+    start_date = datetime(2020, 1, 1) 
+
+    for i in range(1, num_branches + 1):
+        city = FAKE.city()
+        branch_list.append({
+            # Tablo yapımızdaki sütun adlarını kullanıyoruz:
+            # 'branch_id': i, 
+            'branch_name': f"{city} Şubesi",
+            'city': city,
+            'address': FAKE.address(),
+            'opening_date': start_date + timedelta(days=random.randint(100, 1000))
+        })
+    return pd.DataFrame(branch_list)
+# -------------------------------------------------------------------------------------
+
+# ... (ANA ÇALIŞTIRMA BLOĞU buradan devam ediyor) ...
 # ----------------- 4. ANA ÇALIŞTIRMA BLOĞU -----------------
+# seed_data.py dosyanızın içindeki ANA ÇALIŞTIRMA BLOĞU
+
+# ----------------- 4. ANA ÇALIŞTIRMA BLOĞU GÜNCELLEMESİ -----------------
 if __name__ == "__main__":
     
-    # 1. Bağlantıyı Dene
-    conn = connect_db()
+    # 1. SQLAlchemy Motorunu Dene
+    engine = create_db_engine() # <-- ARTIK BU ÇAĞRILIYOR
     
-    if conn is None:
-        print("\n[DURDURULDU] Bağlantı hatası nedeniyle veri üretimi başlatılamadı.")
+    if engine is None:
+        print("\n[DURDURULDU] Motor hatası nedeniyle veri üretimi başlatılamadı.")
     else:
-        # Hata olmaması için bu kısım çalışmalı
-        print("\n-> BAĞLANTI BAŞARILI. SORGULANIYOR.")
-
-        # SQL ile basit bir kontrol yapalım
-        cur = conn.cursor()
-        cur.execute("SELECT now();") # Veritabanından güncel saati istiyoruz
-        result = cur.fetchone()
-        print(f"-> Veritabanı Kontrolü Başarılı: PostgreSQL Güncel Saati: {result[0]}")
+        print("\n-> BAĞLANTI BAŞARILI. Veri üretimi ve yükleme başlıyor...")
         
-        # ... (Diğer kodlar)
-        conn.close()
-        print("\n[TAMAMLANDI] Bağlantı kapatıldı.")
+        # 1. ŞUBE VERİSİ ÜRETİMİ VE YÜKLEMESİ
+        branches_df = generate_branch_data(num_branches=5)
+        
+        try:
+            # YENİ YÜKLEME KODU: engine kullanılıyor ve 'commit' gerekmiyor
+            branches_df.to_sql('branches', engine, schema='public', if_exists='append', index=False)
+            
+            print(f"-> {len(branches_df)} adet şube verisi başarıyla yüklendi.")
+            
+        except Exception as e:
+            print(f"!!! [YÜKLEME HATASI] 'branches' tablosuna yükleme başarısız: {e}")
+            
+        print("\n[TAMAMLANDI] Tüm işlemler bitti.")
