@@ -16,97 +16,114 @@ def create_db_engine():
     engine_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
     return create_engine(engine_url)
 
-def get_data_for_prediction(engine):
-    """Veritabanından tahmin için gerekli veriyi çeker ve hazırlar."""
-    print("-> Veritabanından veriler çekiliyor ve günlük toplam satışa dönüştürülüyor...")
+# prediction_engine.py dosyasındaki fonksiyonları değiştirin
+
+def get_data_for_prediction(engine, branch_id=None):
+    """Belirli bir şube veya tüm şubeler için günlük toplam satış verisini çeker."""
     
-    # Tüm şubelerden, tüm tarihlerdeki günlük toplam satış miktarını çeken SQL sorgusu
-    query = """
+    # 0 = Tüm şubeler. branch_id verilirse o şube için filtreleme yapılır.
+    if branch_id and branch_id != 0:
+        filter_clause = f"WHERE branch_id = {branch_id}"
+        print(f"-> Veri çekiliyor: Sadece Şube {branch_id}")
+    else:
+        filter_clause = ""
+        print("-> Veri çekiliyor: Tüm Şubeler Toplamı")
+
+    query = f"""
     SELECT 
-        DATE(sale_datetime) as ds,  -- Prophet için tarih sütunu 'ds' olmalı
-        SUM(total_sale_amount) as y  -- Prophet için tahmin edilecek değer 'y' olmalı
+        DATE(sale_datetime) as ds,  -- Prophet için tarih
+        SUM(total_sale_amount) as y  -- Tahmin edilecek değer
     FROM sales
+    {filter_clause}
     GROUP BY DATE(sale_datetime)
     ORDER BY ds;
     """
     
-    # Pandas ile veriyi çekme
     df = pd.read_sql(query, engine)
-    
-    # Tarih formatını kontrol etme
     df['ds'] = pd.to_datetime(df['ds'])
     
-    print(f"-> Tahmin için {len(df)} günlük veri seti hazırlandı.")
     return df
 
-def train_and_predict(df, periods=7):
-    """Prophet modelini eğitir ve ileriye dönük tahmin yapar."""
-    print(f"-> Prophet modeli eğitiliyor...")
+def train_and_predict(df, branch_id, periods=7):
+    """Prophet modelini eğitir, tahmin yapar ve sonucu kaydetmeye hazırlar."""
     
-    # 1. Modeli Tanımlama (Günlük veriye uygun)
+    # Veri setinde yeterli veri yoksa tahmin yapma (Örn: yeni şubeler)
+    if len(df) < 30:
+        print(f"!!! Şube {branch_id}: Tahmin için yeterli veri yok (Minimum 30 gün gerekli).")
+        return None
+        
+    print(f"-> Şube {branch_id}: Model eğitiliyor...")
+    
     model = Prophet(
-        yearly_seasonality=True, # Yıllık trendleri yakala
-        weekly_seasonality=True, # Haftalık trendleri yakala
-        daily_seasonality=False # Günlük bazda toplama yaptığımız için bu gerekli değil
+        yearly_seasonality=True,
+        weekly_seasonality=True,
+        daily_seasonality=False
     )
     
-    # 2. Modeli Eğitme
     model.fit(df)
-    print("-> Model eğitimi tamamlandı.")
-
-    # 3. Gelecekteki 7 günü belirleme
     future = model.make_future_dataframe(periods=periods)
-    
-    # 4. Tahmin yapma
     forecast = model.predict(future)
-    
-    # Sadece gelecek 7 günün tahminlerini al
-    prediction = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods)
-    
-    print(f"-> Önümüzdeki {periods} gün için tahmin başarıyla yapıldı.")
-    return prediction
 
+    prediction = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods).copy()
+    
+    # Sütun adlarını veritabanına uyarlıyoruz
+    prediction.rename(columns={'ds': 'prediction_date', 'yhat': 'predicted_sales', 'yhat_lower': 'lower_bound', 'yhat_upper': 'upper_bound'}, inplace=True)
+    
+    # Hangi şube için tahmin yapıldığını ekliyoruz
+    prediction['branch_id'] = branch_id 
+    
+    return prediction
 # ----------------- ANA ÇALIŞTIRMA BLOĞU -----------------
+# prediction_engine.py dosyasında, main bloğunun içini değiştirin
+
 if __name__ == "__main__":
     engine = create_db_engine()
     
     if engine:
-        # 1. Veriyi çek
-        sales_df = get_data_for_prediction(engine)
         
-        # 2. Modeli eğit ve 7 günlük tahmin yap
-        predictions_7_days = train_and_predict(sales_df, periods=7)
+        # 0. Veritabanından mevcut şube ID'lerini çek
+        try:
+            branch_ids_in_db = pd.read_sql_table('branches', engine, schema='public', columns=['branch_id'])['branch_id'].tolist()
+        except Exception:
+            print("!!! HATA: 'branches' tablosu bulunamadı. Lütfen seed_data.py'yi çalıştırın.")
+            branch_ids_in_db = []
+            
+        # Tahmin sonuçlarını kaydetmek için boş bir liste oluştur
+        all_predictions = []
         
-        # 3. Sonuçları yazdır
+        # 1. Tüm Şubeler İçin Tahmin Yap (branch_id = 0, Toplam Satış)
+        branch_ids_to_predict = [0] + branch_ids_in_db # [0, 1, 2, 3, 4, 5]
+        
         print("\n================================================")
-        print("🚀 ÖNÜMÜZDEKİ 7 GÜN İÇİN TOPLAM SATIŞ TAHMİNİ 🚀")
+        print("🤖 BAŞLIYOR: Şube Bazlı Satış Tahmin Motoru")
         print("================================================")
-        print(predictions_7_days.to_string(index=False))
-        print("\n* yhat: Tahmin edilen ortalama satış miktarı")
-        print("* yhat_lower/upper: %80 güven aralığı")
         
-    else:
-        print("\n[DURDURULDU] Veritabanı bağlantısı kurulamadığı için tahmin yapılamadı.")
+        for branch_id in branch_ids_to_predict:
+            
+            # Veriyi çek
+            df = get_data_for_prediction(engine, branch_id=branch_id)
+            
+            # Modeli eğit ve tahmin yap
+            prediction_df = train_and_predict(df, branch_id=branch_id, periods=7)
+            
+            if prediction_df is not None:
+                all_predictions.append(prediction_df)
+                
+            print(f"-> Şube {branch_id} için işlem tamamlandı.")
 
-    # prediction_engine.py dosyasında, main bloğunun en altı
-
-# 4. Tahmin Sonuçlarını Veritabanına Kaydetme
-try:
-    print("-> Tahmin sonuçları veritabanına kaydediliyor...")
-    
-    # Veritabanına kaydetmeden önce sütun adlarını düzenleyelim
-    predictions_to_save = predictions_7_days.rename(columns={'ds': 'prediction_date', 'yhat': 'predicted_sales', 'yhat_lower': 'lower_bound', 'yhat_upper': 'upper_bound'})
-    
-    # Tüm şube toplamı olduğu için branch_id'yi 0 olarak ayarlayalım
-    predictions_to_save['branch_id'] = 0 
-    
-    # Sadece gerekli sütunları alalım
-    final_df = predictions_to_save[['branch_id', 'prediction_date', 'predicted_sales', 'lower_bound', 'upper_bound']]
-
-    # Veriyi kaydetme (Artık SQLAlchemy kullanıyoruz)
-    final_df.to_sql('prediction_results', engine, schema='public', if_exists='append', index=False)
-    
-    print("-> Tahmin sonuçları başarıyla 'prediction_results' tablosuna yüklendi.")
-    
-except Exception as e:
-    print(f"!!! [KAYIT HATASI] Tahmin sonuçları yüklenemedi: {e}")
+        
+        # 2. Tahmin Sonuçlarını Birleştirme ve Veritabanına Kaydetme
+        if all_predictions:
+            final_predictions_df = pd.concat(all_predictions)
+            
+            print(f"\n-> TOPLAM {len(final_predictions_df)} adet yeni tahmin kaydı yüklenecek.")
+            
+            # Veriyi kaydetme
+            final_predictions_df.to_sql('prediction_results', engine, schema='public', if_exists='append', index=False)
+            
+            print("✅ Tahmin sonuçları başarıyla 'prediction_results' tablosuna yüklendi.")
+            
+        else:
+            print("!!! HATA: Yüklenecek tahmin bulunamadı.")
+            
+    print("\n[TAMAMLANDI] Tahmin Motoru çalışması sona erdi.")
