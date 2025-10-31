@@ -8,9 +8,7 @@ import random
 DB_HOST = "localhost"
 DB_NAME = "postgres"
 DB_USER = "postgres"
-DB_PASS = "Sudem12345" # <-- Kendi şifreniz
-
-# ----------------- FONKSİYONLAR -----------------
+DB_PASS = "Sudem12345" 
 
 def get_db_engine():
     """SQLAlchemy motorunu oluşturur."""
@@ -19,25 +17,18 @@ def get_db_engine():
 
 def load_predictions(engine):
     """Veritabanından en son tahmin sonuçlarını çeker."""
-    
-    # En son ne zaman tahmin yapıldığını bul (prediction_run_time)
     latest_run_time = pd.read_sql("SELECT MAX(prediction_run_time) FROM prediction_results", engine).iloc[0, 0]
-    
-    # Sadece o en son çalışma zamanındaki verileri çek
     query = f"""
     SELECT * FROM prediction_results 
     WHERE prediction_run_time = '{latest_run_time}'
     ORDER BY branch_id, prediction_date;
     """
     df = pd.read_sql(query, engine)
-    
-    # branch_id 0 olanı "Genel Toplam" olarak adlandır
     df['branch_name'] = df['branch_id'].apply(lambda x: 'Genel Toplam' if x == 0 else f'Şube {x}')
     return df
 
 def load_stock_data(engine):
     """Mevcut stok ve maliyet verilerini çeker."""
-    # SQL sorgusu ile ürün stok ve reorder point bilgilerini çek
     query = """
     SELECT 
         p.product_name, 
@@ -49,22 +40,13 @@ def load_stock_data(engine):
     ORDER BY current_stock_level DESC;
     """
     df = pd.read_sql(query, engine)
-    
-    # Basit bir KPI hesaplama: Stok Değerini Hesaplama
     df['total_stock_value'] = df['current_stock_level'] * df['unit_cost']
-    
-    # Az Stok Uyarısı (Reorder Point'in altında olanlar)
     low_stock_count = df[df['current_stock_level'] < df['reorder_point']].shape[0]
-    
     return df, low_stock_count
 
 def load_employee_metrics(engine):
     """Personel maliyeti ve verimlilik metriklerini hesaplar."""
-    
-    # Toplam Personel Sayısı
     total_employees = pd.read_sql("SELECT COUNT(employee_id) FROM employees", engine).iloc[0, 0]
-    
-    # Çalışan Başına Satış Hacmi (Ortalama)
     query_sales_per_employee = """
     SELECT 
         e.employee_id,
@@ -74,12 +56,8 @@ def load_employee_metrics(engine):
     GROUP BY e.employee_id
     """
     sales_per_employee_df = pd.read_sql(query_sales_per_employee, engine)
-    
     avg_sales_per_employee = sales_per_employee_df['total_sales'].mean()
-    
-    # Basit Toplam Maliyet Tahmini (40 çalışan * ortalama saatlik ücret * 160 saat/ay)
     avg_monthly_cost = 40 * 250 * 160 
-    
     return avg_sales_per_employee, avg_monthly_cost, total_employees
 
 # ----------------- STREAMLIT ANA PANEL KODU -----------------
@@ -140,7 +118,6 @@ try:
     # 3. Görselleştirme
     st.header(f"📈 {selected_branch} İçin 7 Günlük Tahmin")
     
-    # Plotly ile grafik oluşturma
     fig = px.line(
         filtered_df,
         x='prediction_date',
@@ -149,7 +126,6 @@ try:
         labels={'predicted_sales': 'Tahmin Edilen Satış (₺)', 'prediction_date': 'Tarih'}
     )
     
-    # Güven aralığını ekleme
     fig.add_scatter(x=filtered_df['prediction_date'], y=filtered_df['upper_bound'], fill=None, mode='lines', line_color='lightgrey', name='Üst Sınır')
     fig.add_scatter(x=filtered_df['prediction_date'], y=filtered_df['lower_bound'], fill='tonexty', mode='lines', line_color='lightgrey', name='Alt Sınır')
     fig.update_layout(showlegend=True)
