@@ -10,9 +10,9 @@ FAKE = Faker('tr_TR')
 
 # ----------------- 1. YAPILANDIRMA AYARLARI -----------------
 DB_HOST = "localhost"
-DB_NAME = "postgres"  
+DB_NAME = "postgres" 
 DB_USER = "postgres"
-DB_PASS = "Sudem12345" # <-- Kendi şifreniz, Türkçe karakter olmamalı
+DB_PASS = "Sudem12345" 
 
 # ----------------- 2. VERITABANI MOTORU OLUŞTURMA -----------------
 def create_db_engine():
@@ -21,8 +21,6 @@ def create_db_engine():
         engine_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}"
         engine = create_engine(engine_url)
         print("\n[BAŞARILI] SQLAlchemy Motoru oluşturuldu.")
-        
-        # Basit bir test bağlantısı yapalım
         with engine.connect() as conn:
             conn.close()
         print("-> Veritabanı bağlantı testi başarılı.")
@@ -31,7 +29,6 @@ def create_db_engine():
         print(f"\n[HATA] Veritabanı motoru oluşturulamadı!")
         print(f"SQLAlchemy Hatası: {e}")
         return None
-
 
 # ----------------- 3. ÖRNEK VERI ÜRETME FONKSIYONLARI -----------------
 
@@ -92,50 +89,65 @@ def generate_product_data(num_products=100):
             'reorder_point': random.randint(10, 50)
         })
     return pd.DataFrame(product_list)
-# seed_data.py dosyanıza generate_product_data fonksiyonundan sonra ekleyin
+
+# YENİ ŞUBE BAZLI STOK ENVANTERİ FONKSİYONU
+def generate_branch_inventory(engine):
+    """Her şube için şube bazlı rastgele stok seviyeleri oluşturur."""
+    print("\n[INFO] Şube bazlı envanter oluşturuluyor...")
+    
+    branches = pd.read_sql_table('branches', engine, schema='public', columns=['branch_id'])
+    products = pd.read_sql_table('products', engine, schema='public', columns=['product_id', 'reorder_point'])
+    
+    inventory_list = []
+    
+    for branch_id in branches['branch_id']:
+        for index, row in products.iterrows():
+            product_id = row['product_id']
+            stock = random.randint(10, 150)
+            
+            inventory_list.append({
+                'branch_id': branch_id,
+                'product_id': product_id,
+                'current_stock_level': stock,
+                'reorder_point': row['reorder_point']
+            })
+
+    inventory_df = pd.DataFrame(inventory_list)
+    return inventory_df
+
 
 def generate_staff_schedules(conn, cursor):
-    """
-    Daha gerçekçi, saat bazlı vardiya verileri oluşturur.
-    Her şubeye, her gün için 2 vardiya atar.
-    """
+    """Detaylı personel vardiya kaydı oluşturur."""
     print("\n[INFO] Detaylı personel vardiya kaydı oluşturuluyor...")
     
-    # Varsayımlar
-    DAYS_AGO = 365 # 1 yıllık veri
-    
-    # Veritabanından mevcut şube ve çalışan ID'lerini çek
+    DAYS_AGO = 365 
     branch_ids_in_db = pd.read_sql("SELECT branch_id FROM branches", conn)['branch_id'].tolist()
     
     shifts = [
-        ('SABAH', '09:00:00', '17:00:00'),
-        ('AKSAM', '13:00:00', '21:00:00')
+        ('09:00:00', '17:00:00'),
+        ('13:00:00', '21:00:00')
     ]
 
     schedule_data = []
     start_date = datetime.now().date() - timedelta(days=DAYS_AGO)
+    employee_ids = list(range(1, 41)) 
 
     for branch_id in branch_ids_in_db:
-        # Rastgele çalışan ID'leri listesi (Örn: 1000'e kadar ID varsayalım)
-        employee_ids = list(range(1, 41)) # 40 çalışan varsayalım (eski kodumuzdaki gibi)
-
         for day_offset in range(DAYS_AGO):
             current_date = start_date + timedelta(days=day_offset)
             current_day_of_week = current_date.weekday() 
 
-            # Hafta sonu daha az personel simülasyonu
             num_morning_staff = random.randint(3, 5) if current_day_of_week < 5 else random.randint(2, 4)
             num_evening_staff = random.randint(4, 7) if current_day_of_week < 5 else random.randint(3, 5)
 
-           # Sabah Vardiyasını Ata (SABAH/AKSAM bilgisini ÇIKARIYORUZ)
+            # Sabah Vardiyasını Ata
             for i in range(num_morning_staff):
-                schedule_data.append((random.choice(employee_ids), branch_id, current_date, shifts[0][1], shifts[0][2], 8.00)) # <<< 6 veri parçası gönderiliyor
-                # shifts[0][1] -> '09:00:00' (start_time)
-                # shifts[0][2] -> '17:00:00' (end_time)
+                schedule_data.append((random.choice(employee_ids), branch_id, current_date, shifts[0][0], shifts[0][1], 8.00)) 
 
             # Akşam Vardiyasını Ata
             for i in range(num_evening_staff):
-                schedule_data.append((random.choice(employee_ids), branch_id, current_date, shifts[1][1], shifts[1][2], 8.00)) # <<< 6 veri parçası gönderiliyor
+                schedule_data.append((random.choice(employee_ids), branch_id, current_date, shifts[1][0], shifts[1][1], 8.00)) 
+
     # Eski verileri temizle
     cursor.execute("TRUNCATE staff_schedules RESTART IDENTITY;")
     conn.commit()
@@ -150,13 +162,11 @@ def generate_staff_schedules(conn, cursor):
     print(f"[SUCCESS] {len(schedule_data)} adet detaylı personel vardiya kaydı oluşturuldu.")
 
 
-
 # -------belirli tarih aralıgında rastgele satış verileri
 
 def generate_sales_data(engine, start_date, end_date, sales_per_day_per_branch=150):
     """Belirli bir tarih aralığında rastgele satış verileri üretir ve yükler."""
     
-    # Veritabanından gerekli ID'leri çekiyoruz:
     branches_in_db = pd.read_sql_table('branches', engine, schema='public', columns=['branch_id'])
     products_in_db = pd.read_sql_table('products', engine, schema='public', columns=['product_id', 'selling_price', 'unit_cost'])
     employees_in_db = pd.read_sql_table('employees', engine, schema='public', columns=['employee_id', 'branch_id'])
@@ -164,28 +174,21 @@ def generate_sales_data(engine, start_date, end_date, sales_per_day_per_branch=1
     sales_list = []
     current_date = start_date
     
-    # Hızlı döngü için ID listelerini hazırlama
     branch_ids = branches_in_db['branch_id'].tolist()
     product_ids = products_in_db['product_id'].tolist()
     
     print(f"\n-> Satış hareketleri simülasyonu başlatılıyor ({start_date} - {end_date})...")
 
     while current_date <= end_date:
-        # Her şube ve her gün için satış simülasyonu
         for branch_id in branch_ids:
-            
-            # O şubede o gün çalışan personelleri filtrele
-            # Şimdilik basitleştirelim: o şubede kayıtlı olan tüm personellerden rastgele seçelim.
             employees_at_branch = employees_in_db[employees_in_db['branch_id'] == branch_id]['employee_id'].tolist()
             
             if not employees_at_branch:
-                continue # Çalışan yoksa satış da yok
+                continue 
             
             for _ in range(sales_per_day_per_branch):
-                
                 product_row = products_in_db.sample(n=1).iloc[0]
                 
-                # Rastgele saat ve dakika oluşturma (8:00 - 22:00 arası)
                 sale_time = datetime(current_date.year, current_date.month, current_date.day, 
                                      random.randint(8, 22), random.randint(0, 59), random.randint(0, 59))
                 
@@ -213,12 +216,10 @@ def generate_sales_data(engine, start_date, end_date, sales_per_day_per_branch=1
 def load_data(engine, df, table_name):
     """Veriyi veritabanına yükler ve sonucu yazdırır."""
     try:
-        # Pandas to_sql ile yükleme
         df.to_sql(table_name, engine, schema='public', if_exists='append', index=False)
         print(f"-> {len(df)} adet {table_name} verisi başarıyla yüklendi.")
         return True
     except Exception as e:
-        # PostgreSQL'de tablo boş değilse ve Primary Key hatası varsa uyarı ver.
         if "duplicate key value violates unique constraint" in str(e):
              print(f"!!! [YÜKLEME HATASI] '{table_name}' zaten dolu. Yeni veri yüklenmedi.")
         else:
@@ -240,7 +241,6 @@ if __name__ == "__main__":
         
         # 2. PERSONEL VERİSİ YÜKLEMESİ
         try:
-            # Personel ataması için veritabanındaki şube ID'lerini çek
             branches_in_db = pd.read_sql_table('branches', engine, schema='public', columns=['branch_id'])
             employees_df = generate_employee_data(branches_df=branches_in_db, num_employees_per_branch=8)
             load_data(engine, employees_df, 'employees')
@@ -251,7 +251,13 @@ if __name__ == "__main__":
         # 3. ÜRÜN VERİSİ YÜKLEMESİ
         products_df = generate_product_data(num_products=100)
         load_data(engine, products_df, 'products')
-        # ... (products yüklemesinden sonra) ...
+        
+        # YENİ EKLENECEK KISIM: BRANCH INVENTORY YÜKLEMESİ
+        try:
+            inventory_df = generate_branch_inventory(engine)
+            load_data(engine, inventory_df, 'branch_inventory') # branch_inventory tablosuna yükle
+        except Exception as e:
+            print(f"!!! [YÜKLEME HATASI] 'branch_inventory' yüklenemedi: {e}")
 
         # 4. VARDİYA PLANLAMA VERİSİ YÜKLEMESİ (psycopg2 ile)
         try:
@@ -259,7 +265,6 @@ if __name__ == "__main__":
             with engine.connect() as connection:
                 psycopg2_conn = connection.connection
                 with psycopg2_conn.cursor() as cursor:
-                    # Fonksiyonu çağır ve vardiya verilerini yükle
                     generate_staff_schedules(psycopg2_conn, cursor)
                 psycopg2_conn.commit()
 
@@ -267,12 +272,10 @@ if __name__ == "__main__":
             print(f"!!! [YÜKLEME HATASI] 'staff_schedules' tablosuna yükleme başarısız: {e}")
 
         # 5. SATIŞ HAREKETLERİ (SALES) VERİSİ YÜKLEMESİ
-        # BU KISMI SİZİN İÇİN EKSİK OLAN SALES YÜKLEMESİYLE DOLDURUN!
-        # Örneğin:
-        # generate_sales_data(engine, start_date, end_date, sales_per_day_per_branch=150)
-        # load_data(engine, sales_df, 'sales')
+        # Bu kısım sadece tek seferlik çalıştırılmalıdır (5M kayıt içerir)
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=1095)
+        sales_df = generate_sales_data(engine, start_date, end_date, sales_per_day_per_branch=150)
+        load_data(engine, sales_df, 'sales')
 
-        print("\n[TAMAMLANDI] Tüm işlemler bitti. Artık sales verisine geçebiliriz!")
-        
-        print("\n[TAMAMLANDI] Tüm işlemler bitti. Artık sales verisine geçebiliriz!")
-        
+        print("\n[TAMAMLANDI] Tüm işlemler bitti. Artık dashboard'u çalıştırabilirsiniz!")
