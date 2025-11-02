@@ -1,0 +1,17 @@
+[theme]
+# Daha kurumsal ve aydınlık bir tema için 'light' kullanıyoruz
+base="light" 
+# Ana renk paletini hafifçe kurumsal maviye çevirelim
+primaryColor="#0A7E8C" 
+# Arka plan rengini beyaz yapalım
+backgroundColor="#FFFFFF"
+# Metin rengini koyu yapalım
+textColor="#333333" 
+
+[client]
+# Tarayıcıda sağ üstteki "Made with Streamlit" yazısını kaldırır
+showSidebarNavigation=true
+
+[global]
+# Uygulamanın menülerini gizler
+disableWidgetAriaLabeling=false
